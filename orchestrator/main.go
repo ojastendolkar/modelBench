@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -53,10 +55,34 @@ func main() {
 			return
 		}
 
+		// Call the inference server
+		inferPayload := map[string]string{
+			"prompt": req.Prompt,
+			"task":   req.Task,
+		}
+		jsonData, _ := json.Marshal(inferPayload)
+
+		resp, err := http.Post("http://localhost:9000/infer", "application/json", bytes.NewBuffer(jsonData))
+		if err != nil {
+			log.Printf("Failed to call inference service: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Inference service error"})
+			return
+		}
+		defer resp.Body.Close()
+
+		var inferResp struct {
+			Output string `json:"output"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&inferResp); err != nil {
+			log.Printf("Failed to decode inference response: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid inference response"})
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		_, err := db.Exec(ctx,
+		_, err = db.Exec(ctx,
 			`INSERT INTO jobs (prompt, task) VALUES ($1, $2)`,
 			req.Prompt, req.Task,
 		)
@@ -67,13 +93,13 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"message": "Job stored in database",
+			"message": "Job stored and inference completed",
 			"prompt":  req.Prompt,
 			"task":    req.Task,
+			"output":  inferResp.Output,
 		})
 	})
 
-	// Run on port 8000
+	// Run server
 	router.Run(":8000")
-
 }
