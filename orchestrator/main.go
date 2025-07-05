@@ -13,17 +13,29 @@ import (
 )
 
 func connectToDB() *pgx.Conn {
-	dsn := "postgres://modelbench:password@localhost:5432/modelbench"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	dsn := "postgres://modelbench:password@postgres:5432/modelbench"
+	var conn *pgx.Conn
+	var err error
 
-	conn, err := pgx.Connect(ctx, dsn)
+	for i := 0; i < 10; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		conn, err = pgx.Connect(ctx, dsn)
+		if err == nil {
+			log.Println("Connected to Postgres!")
+			break
+		}
+
+		log.Printf("Postgres not ready, retrying in 2s... (%d/10)", i+1)
+		time.Sleep(2 * time.Second)
+	}
+
 	if err != nil {
 		log.Fatalf("Unable to connect to database: %v\n", err)
 	}
-	log.Println("Connected to Postgres!")
 
-	_, err = conn.Exec(ctx, `
+	_, err = conn.Exec(context.Background(), `
 		CREATE TABLE IF NOT EXISTS jobs (
 			id SERIAL PRIMARY KEY,
 			prompt TEXT NOT NULL,
@@ -55,14 +67,23 @@ func main() {
 			return
 		}
 
-		// Call the inference server
+		// Call the inference service with retries
 		inferPayload := map[string]string{
 			"prompt": req.Prompt,
 			"task":   req.Task,
 		}
 		jsonData, _ := json.Marshal(inferPayload)
 
-		resp, err := http.Post("http://localhost:9000/infer", "application/json", bytes.NewBuffer(jsonData))
+		var resp *http.Response
+		var err error
+		for i := 0; i < 5; i++ {
+			resp, err = http.Post("http://inference:9000/infer", "application/json", bytes.NewBuffer(jsonData))
+			if err == nil {
+				break
+			}
+			log.Printf("Retrying inference request (%d/5): %v", i+1, err)
+			time.Sleep(2 * time.Second)
+		}
 		if err != nil {
 			log.Printf("Failed to call inference service: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Inference service error"})
@@ -100,6 +121,6 @@ func main() {
 		})
 	})
 
-	// Run server
+	// Run the API server
 	router.Run(":8000")
 }

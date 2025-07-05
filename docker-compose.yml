@@ -1,8 +1,7 @@
 services:
-  db:
+  postgres:
     image: postgres:15
     container_name: modelbench_postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: modelbench
       POSTGRES_PASSWORD: password
@@ -11,6 +10,21 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - inference
+
+  inference:
+    build:
+      context: ./inference
+    ports:
+      - "9000:9000"
 
 volumes:
   pgdata:
