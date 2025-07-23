@@ -1,32 +1,35 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from transformers import pipeline
+import time
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Load summarization model once at startup
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+# Preload multiple models (for simplicity we use the same pipeline with different aliases)
+MODEL_REGISTRY = {
+    "bart": pipeline("summarization", model="facebook/bart-large-cnn"),
+    "t5": pipeline("summarization", model="t5-small")
+    # You can add more models here
+}
 
-# Define expected request schema
 class InferenceRequest(BaseModel):
     prompt: str
-    task: str
+    task: str  # optional, keeping for compatibility
+    model_id: str  # NEW: defines which model to use
 
-# Define inference endpoint
 @app.post("/infer")
-async def infer(request: InferenceRequest):
-    # For now, only support summarization
-    if request.task != "summarize":
-        return {"error": f"Unsupported task: {request.task}"}
-    
-    # Run model inference
-    result = summarizer(
-        request.prompt,
-        max_length=100,
-        min_length=10,
-        do_sample=False
-    )
+def infer(req: InferenceRequest):
+    if req.model_id not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Model {req.model_id} not supported")
 
-    # Return summarized output
-    return {"output": result[0]["summary_text"]}
+    model = MODEL_REGISTRY[req.model_id]
+
+    start = time.time()
+    output = model(req.prompt, max_length=60, min_length=20, do_sample=False)[0]["summary_text"]
+    latency = time.time() - start
+
+    return {
+        "output": output,
+        "latency": latency,
+        "model_used": req.model_id
+    }

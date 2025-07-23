@@ -40,6 +40,9 @@ func connectToDB() *pgx.Conn {
 			id SERIAL PRIMARY KEY,
 			prompt TEXT NOT NULL,
 			task TEXT NOT NULL,
+			model_id TEXT,
+			output TEXT,
+			latency FLOAT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
@@ -59,18 +62,19 @@ func main() {
 
 	router.POST("/submit", func(c *gin.Context) {
 		var req struct {
-			Prompt string `json:"prompt"`
-			Task   string `json:"task"`
+			Prompt  string `json:"prompt"`
+			Task    string `json:"task"`
+			ModelID string `json:"model_id"`
 		}
 		if err := c.BindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
 
-		// Call the inference service with retries
 		inferPayload := map[string]string{
-			"prompt": req.Prompt,
-			"task":   req.Task,
+			"prompt":   req.Prompt,
+			"task":     req.Task,
+			"model_id": req.ModelID,
 		}
 		jsonData, _ := json.Marshal(inferPayload)
 
@@ -92,7 +96,9 @@ func main() {
 		defer resp.Body.Close()
 
 		var inferResp struct {
-			Output string `json:"output"`
+			Output    string  `json:"output"`
+			Latency   float64 `json:"latency"`
+			ModelUsed string  `json:"model_used"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&inferResp); err != nil {
 			log.Printf("Failed to decode inference response: %v\n", err)
@@ -104,8 +110,8 @@ func main() {
 		defer cancel()
 
 		_, err = db.Exec(ctx,
-			`INSERT INTO jobs (prompt, task) VALUES ($1, $2)`,
-			req.Prompt, req.Task,
+			`INSERT INTO jobs (prompt, task, model_id, output, latency) VALUES ($1, $2, $3, $4, $5)`,
+			req.Prompt, req.Task, inferResp.ModelUsed, inferResp.Output, inferResp.Latency,
 		)
 		if err != nil {
 			log.Printf("Failed to insert job: %v\n", err)
@@ -114,13 +120,53 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"message": "Job stored and inference completed",
-			"prompt":  req.Prompt,
-			"task":    req.Task,
-			"output":  inferResp.Output,
+			"message":  "Job stored and inference completed",
+			"prompt":   req.Prompt,
+			"task":     req.Task,
+			"model_id": inferResp.ModelUsed,
+			"output":   inferResp.Output,
+			"latency":  inferResp.Latency,
 		})
 	})
 
-	// Run the API server
+	router.GET("/jobs", func(c *gin.Context) {
+		rows, err := db.Query(context.Background(), `
+			SELECT id, prompt, task, model_id, output, latency, created_at
+			FROM jobs
+			ORDER BY id DESC
+			LIMIT 20
+		`)
+		if err != nil {
+			log.Printf("Failed to fetch jobs: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch jobs"})
+			return
+		}
+		defer rows.Close()
+
+		type Job struct {
+			ID        int       `json:"id"`
+			Prompt    string    `json:"prompt"`
+			Task      string    `json:"task"`
+			ModelID   string    `json:"model_id"`
+			Output    string    `json:"output"`
+			Latency   float64   `json:"latency"`
+			CreatedAt time.Time `json:"created_at"`
+		}
+
+		var jobs []Job
+
+		for rows.Next() {
+			var job Job
+			err := rows.Scan(&job.ID, &job.Prompt, &job.Task, &job.ModelID, &job.Output, &job.Latency, &job.CreatedAt)
+			if err != nil {
+				log.Printf("Failed to scan row: %v\n", err)
+				continue
+			}
+			jobs = append(jobs, job)
+		}
+
+		c.JSON(http.StatusOK, jobs)
+	})
+
 	router.Run(":8000")
 }
