@@ -1,0 +1,37 @@
+{
+    "id": null,
+    "title": "ModelBench Overview",
+    "timezone": "browser",
+    "schemaVersion": 36,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "Requests Total (by model)",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "modelbench_requests_total",
+            "legendFormat": "{{model}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+      },
+      {
+        "type": "graph",
+        "title": "Latency (p95) by model",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(modelbench_request_latency_seconds_bucket[1m]))",
+            "legendFormat": "{{model}}",
+            "refId": "B"
+          }
+        ],
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+      }
+    ]
+  }
+  
