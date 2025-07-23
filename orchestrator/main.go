@@ -10,6 +10,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	requestCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "modelbench_requests_total",
+			Help: "Total number of /submit requests.",
+		},
+		[]string{"model"},
+	)
+
+	requestLatency = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "modelbench_request_latency_seconds",
+			Help:    "Request latency distributions by model.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"model"},
+	)
 )
 
 func connectToDB() *pgx.Conn {
@@ -58,6 +80,9 @@ func main() {
 	db := connectToDB()
 	defer db.Close(context.Background())
 
+	prometheus.MustRegister(requestCount)
+	prometheus.MustRegister(requestLatency)
+
 	router := gin.Default()
 
 	router.POST("/submit", func(c *gin.Context) {
@@ -70,6 +95,9 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
+
+		// Track latency from just before inference
+		start := time.Now()
 
 		inferPayload := map[string]string{
 			"prompt":   req.Prompt,
@@ -105,6 +133,10 @@ func main() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid inference response"})
 			return
 		}
+
+		duration := time.Since(start).Seconds()
+		requestCount.WithLabelValues(inferResp.ModelUsed).Inc()
+		requestLatency.WithLabelValues(inferResp.ModelUsed).Observe(duration)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -167,6 +199,8 @@ func main() {
 
 		c.JSON(http.StatusOK, jobs)
 	})
+
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	router.Run(":8000")
 }

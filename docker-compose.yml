@@ -11,6 +11,12 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  inference:
+    build:
+      context: ./inference
+    ports:
+      - "9000:9000"
+  
   orchestrator:
     build:
       context: ./orchestrator
@@ -19,12 +25,28 @@ services:
     depends_on:
       - postgres
       - inference
-
-  inference:
-    build:
-      context: ./inference
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: modelbench-prometheus
     ports:
-      - "9000:9000"
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - orchestrator
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: modelbench-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
 
 volumes:
   pgdata:
+  grafana-data:
